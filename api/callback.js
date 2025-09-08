@@ -1,4 +1,5 @@
-// /api/callback — robust: send multiple postMessage formats + hard redirect fallback
+// /api/callback — Exchange ?code for token, then deliver to Decap CMS
+
 async function exchangeCodeForToken(code, clientId, clientSecret) {
   const resp = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
@@ -7,11 +8,23 @@ async function exchangeCodeForToken(code, clientId, clientSecret) {
       Accept: "application/json",
       "User-Agent": "decap-oauth-provider",
     },
-    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+    body: JSON.stringify({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+    }),
   });
-  if (!resp.ok) throw new Error(`Token exchange failed: ${resp.status}`);
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Token exchange failed: ${resp.status} ${text}`);
+  }
+
   const data = await resp.json();
-  if (!data.access_token) throw new Error(`No access_token: ${JSON.stringify(data)}`);
+  if (!data.access_token) {
+    throw new Error(`No access_token in response: ${JSON.stringify(data)}`);
+  }
+
   return data.access_token;
 }
 
@@ -28,40 +41,49 @@ export default async function handler(req, res) {
 
     const token = await exchangeCodeForToken(code, clientId, clientSecret);
 
-    // Admin URL (parent tab) — nên để absolute
-    let siteUrl = process.env.REDIRECT_URL || "https://connecttechnologyteam.github.io/devnotes/admin/";
-    siteUrl = siteUrl.replace(/#\/?$/, "").replace(/\/+$/, "") + "/";
+    // Site admin URL (đặt trong ENV)
+    let redirectUrl =
+      process.env.REDIRECT_URL ||
+      "https://connecttechnologyteam.github.io/devnotes/admin";
 
+    // 🔧 sanitize: bỏ /, #/, hoặc /#/ dư ở cuối
+    redirectUrl = redirectUrl
+      .replace(/#\/?$/, "")
+      .replace(/\/#$/, "")
+      .replace(/\/+$/, "");
+
+    // HTML trả về: gửi token qua postMessage + fallback hash
     const html = `<!doctype html>
 <html><head><meta charset="utf-8" /></head>
 <body>
 <script>
 (function () {
-  try {
-    var token = ${JSON.stringify(token)};
-    var parentUrl = ${JSON.stringify(siteUrl)};
+  var token = ${JSON.stringify(token)};
+  var parentUrl = ${JSON.stringify(redirectUrl)};
 
-    // 1) Tất cả định dạng postMessage từng được Decap/Netlify CMS hỗ trợ
-    var msgJson = 'authorization:github:' + JSON.stringify({ token: token });
-    var msgRaw  = 'authorization:github:' + token; // một số bản cũ dùng format này
+  try {
+    var msg = 'authorization:github:' + JSON.stringify({ token: token });
+    var raw = 'authorization:github:' + token;
 
     if (window.opener && !window.opener.closed) {
-      try { window.opener.postMessage(msgJson, '*'); } catch(_) {}
-      try { window.opener.postMessage(msgRaw,  '*'); } catch(_) {}
+      try { window.opener.postMessage(msg, '*'); } catch(_) {}
+      try { window.opener.postMessage(raw, '*'); } catch(_) {}
     }
 
-    // 2) Cưỡng bức điều hướng tab cha về URL có #access_token (cross-origin NAV được phép)
-    //    Nếu postMessage không được lắng nghe thì Decap vẫn nhận token qua hash.
-    try { if (window.opener && !window.opener.closed) { window.opener.location = parentUrl + '#access_token=' + token + '&token_type=bearer'; } } catch (_) {}
+    // Fallback: điều hướng tab cha sang URL có #access_token
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.location = parentUrl + '#access_token=' + token + '&token_type=bearer';
+      }
+    } catch (_) {}
 
-    // 3) Đóng popup (nếu browser chặn, thì sau 800ms tự điều hướng fallback tại chính popup)
+    // Đóng popup, fallback reload chính popup
     try { window.close(); } catch(_) {}
     setTimeout(function () {
       location.replace(parentUrl + '#access_token=' + token + '&token_type=bearer');
     }, 800);
   } catch (e) {
-    // Fallback cuối
-    location.replace(${JSON.stringify(siteUrl)} + '#access_token=' + ${JSON.stringify(token)} + '&token_type=bearer');
+    location.replace(parentUrl + '#access_token=' + ${JSON.stringify(token)} + '&token_type=bearer');
   }
 })();
 </script>
@@ -71,6 +93,6 @@ export default async function handler(req, res) {
     res.status(200).end(html);
   } catch (e) {
     console.error("callback error:", e);
-    res.status(500).send("OAuth callback failed");
+    res.status(500).send("OAuth callback failed: " + (e?.message || e));
   }
 }
