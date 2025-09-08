@@ -1,4 +1,4 @@
-// /api/callback — exchange code -> token, deliver via postMessage (robust)
+// /api/callback — exchange code -> token, deliver via postMessage (robust with strict origin)
 async function exchangeCodeForToken(code, clientId, clientSecret) {
   const r = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
@@ -22,40 +22,34 @@ export default async function handler(req, res) {
 
     const token = await exchangeCodeForToken(code, id, secret);
 
-    // Admin URL (no '#', no trailing slash)
     let adminUrl = process.env.REDIRECT_URL || "https://connecttechnologyteam.github.io/devnotes/admin";
-    adminUrl = adminUrl.replace(/[#?].*$/, "").replace(/\/+$/, "");
+    adminUrl = adminUrl.replace(/[#?].*$/, '').replace(/\/+$/, '');
 
-    const html = `<!doctype html>
-<html><head><meta charset=\"utf-8\"/></head><body>
-<script>
+    const PARENT_ORIGIN = "https://connecttechnologyteam.github.io";
+
+    const html = `<!doctype html><meta charset=\"utf-8\"><body><script>
 (function () {
   var token = ${JSON.stringify(token)};
-  // Decap/Netlify CMS legacy & new formats
   var m1 = 'authorization:github:' + JSON.stringify({ token: token, provider: 'github' });
   var m2 = 'authorization:github:' + JSON.stringify({ token: token });
   var m3 = 'authorization:github:' + token;
-
   function sendAll(){
-    try { window.opener && window.opener.postMessage(m1, '*'); } catch(_) {}
-    try { window.opener && window.opener.postMessage(m2, '*'); } catch(_) {}
-    try { window.opener && window.opener.postMessage(m3, '*'); } catch(_) {}
+    try { window.opener && window.opener.postMessage(m1, '${PARENT_ORIGIN}'); } catch(_) {}
+    try { window.opener && window.opener.postMessage(m2, '${PARENT_ORIGIN}'); } catch(_) {}
+    try { window.opener && window.opener.postMessage(m3, '${PARENT_ORIGIN}'); } catch(_) {}
   }
-
-  // fire immediately & retry ~3s to avoid race with CMS boot
   sendAll();
-  var n = 0, iv = setInterval(function(){ sendAll(); if(++n>=25) clearInterval(iv); }, 120);
-
-  // close popup; fallback: navigate popup itself to admin (no hash) if close blocked
+  var n=0, iv=setInterval(function(){ sendAll(); if(++n>=25) clearInterval(iv); }, 120);
+  try { window.opener && (window.opener.location.href = '${adminUrl}/#/'); } catch(_) {}
   try { window.close(); } catch(_) {}
-  setTimeout(function(){ location.replace(${JSON.stringify(adminUrl)}); }, 2000);
+  setTimeout(function(){ location.replace('${adminUrl}'); }, 2000);
 })();
-</script>
-</body></html>`;
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
+</script></body>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(200).end(html);
   } catch (e) {
-    console.error("callback error:", e);
-    res.status(500).send("OAuth callback failed");
+    console.error('callback error:', e);
+    res.status(500).send('OAuth callback failed');
   }
 }
