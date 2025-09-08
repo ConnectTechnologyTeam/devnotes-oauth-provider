@@ -1,4 +1,3 @@
-// /api/auth — redirect 302 sang GitHub OAuth
 export default async function handler(req, res) {
   try {
     const clientId = process.env.OAUTH_CLIENT_ID;
