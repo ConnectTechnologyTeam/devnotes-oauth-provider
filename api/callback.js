@@ -1,16 +1,12 @@
-// /api/callback — Exchange ?code for token, then deliver to Decap CMS
+// /api/callback — đổi code -> token, gửi token về Decap CMS
 async function exchangeCodeForToken(code, clientId, clientSecret) {
-  const resp = await fetch("https://github.com/login/oauth/access_token", {
+  const r = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "User-Agent": "decap-oauth-provider"
-    },
-    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code })
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
   });
-  if (!resp.ok) throw new Error(`Token exchange failed: ${resp.status}`);
-  const data = await resp.json();
+  if (!r.ok) throw new Error(`Token exchange failed: ${r.status}`);
+  const data = await r.json();
   if (!data.access_token) throw new Error(`No access_token: ${JSON.stringify(data)}`);
   return data.access_token;
 }
@@ -28,7 +24,7 @@ export default async function handler(req, res) {
 
     const token = await exchangeCodeForToken(code, clientId, clientSecret);
 
-    // Admin URL (parent tab). Dùng absolute, KHÔNG có dấu '/' cuối, KHÔNG có '#'
+    // URL trang admin — tuyệt đối, KHÔNG có '#' và KHÔNG cần '/' cuối
     let parentUrl = process.env.REDIRECT_URL || "https://connecttechnologyteam.github.io/devnotes/admin";
     parentUrl = parentUrl.replace(/[#?].*$/, "").replace(/\/+$/, ""); // sanitize
 
@@ -39,34 +35,29 @@ export default async function handler(req, res) {
   var token = ${JSON.stringify(token)};
   var parentUrl = ${JSON.stringify(parentUrl)};
 
-  // 1) Gửi postMessage theo cả 2 định dạng, lặp lại vài lần để chắc chắn listener nhận được
-  function sendMessages() {
-    var msgJson = 'authorization:github:' + JSON.stringify({ token: token });
-    var msgRaw  = 'authorization:github:' + token;
-    try { window.opener && window.opener.postMessage(msgJson, '*'); } catch(_) {}
-    try { window.opener && window.opener.postMessage(msgRaw,  '*'); } catch(_) {}
+  // Gửi cho Decap theo cả 2 format
+  function send() {
+    try { window.opener && window.opener.postMessage('authorization:github:' + JSON.stringify({token: token}), '*'); } catch(_){}
+    try { window.opener && window.opener.postMessage('authorization:github:' + token, '*'); } catch(_){}
   }
-  var tries = 0;
-  var iv = setInterval(function(){ sendMessages(); if(++tries >= 12){ clearInterval(iv); } }, 120);
-  // gửi ngay 1 phát
-  sendMessages();
+  send();
+  var i=0, iv=setInterval(function(){ send(); if(++i>=10) clearInterval(iv); }, 120);
 
-  // 2) Fallback cưỡng bức: điều hướng tab cha về URL có #access_token=... (đúng format)
+  // Fallback cưỡng bức: điều hướng tab cha về URL có #access_token (⚠️ KHÔNG có '/')
   try {
     if (window.opener && !window.opener.closed) {
-      window.opener.location = parentUrl + '/#access_token=' + token + '&token_type=bearer';
+      window.opener.location = parentUrl + '#access_token=' + token + '&token_type=bearer';
     }
   } catch(_) {}
 
-  // 3) Đóng popup; nếu bị chặn, 1s sau tự điều hướng chính popup về URL fallback
-  try { window.close(); } catch(_) {}
+  // Đóng popup, nếu bị chặn thì điều hướng chính popup (vẫn dùng '#' không có '/')
+  try { window.close(); } catch(_){}
   setTimeout(function(){
-    location.replace(parentUrl + '/#access_token=' + token + '&token_type=bearer');
-  }, 1000);
+    location.replace(parentUrl + '#access_token=' + token + '&token_type=bearer');
+  }, 900);
 })();
 </script>
 </body></html>`;
-
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.status(200).end(html);
   } catch (e) {
