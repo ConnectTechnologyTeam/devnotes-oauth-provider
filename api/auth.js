@@ -1,6 +1,10 @@
-// /api/auth.js  (Vercel Serverless)
-function getProto(req) { return req.headers["x-forwarded-proto"] || "https"; }
-function getHost(req)  { return req.headers.host; }
+// /api/auth  — Redirect user to GitHub OAuth
+function getProto(req) {
+  return req.headers["x-forwarded-proto"] || "https";
+}
+function getHost(req) {
+  return req.headers.host;
+}
 
 export default async function handler(req, res) {
   try {
@@ -8,7 +12,7 @@ export default async function handler(req, res) {
     if (!clientId) return res.status(500).send("Missing OAUTH_CLIENT_ID");
 
     const proto = getProto(req);
-    const host  = getHost(req);
+    const host = getHost(req);
     const redirectUri = `${proto}://${host}/api/callback`;
     const state = Math.random().toString(36).slice(2);
 
@@ -19,7 +23,7 @@ export default async function handler(req, res) {
       `&scope=${encodeURIComponent("repo user:email")}` +
       `&state=${encodeURIComponent(state)}`;
 
-    // ✅ Redirect 302 sang GitHub thay vì trả JSON
+    // Redirect thẳng tới GitHub (thay vì trả JSON)
     res.writeHead(302, { Location: authUrl });
     res.end();
   } catch (e) {
