@@ -1,3 +1,4 @@
+// /api/callback — exchange code -> token, deliver via postMessage (robust)
 async function exchangeCodeForToken(code, clientId, clientSecret) {
   const r = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
@@ -21,28 +22,33 @@ export default async function handler(req, res) {
 
     const token = await exchangeCodeForToken(code, id, secret);
 
-    // Admin URL base (normalize: strip query/hash, ensure trailing slash, and add "#/" for Decap)
+    // Admin URL (no '#', no trailing slash)
     let adminUrl = process.env.REDIRECT_URL || "https://connecttechnologyteam.github.io/devnotes/admin";
     adminUrl = adminUrl.replace(/[#?].*$/, "").replace(/\/+$/, "");
-    const adminUrlFinal = adminUrl + "/#/"; // GitHub Pages requires trailing "/" for folder; Decap prefers "#/"
 
     const html = `<!doctype html>
-<html><head><meta charset="utf-8"/></head><body>
+<html><head><meta charset=\"utf-8\"/></head><body>
 <script>
 (function () {
   var token = ${JSON.stringify(token)};
+  // Decap/Netlify CMS legacy & new formats
   var m1 = 'authorization:github:' + JSON.stringify({ token: token, provider: 'github' });
   var m2 = 'authorization:github:' + JSON.stringify({ token: token });
   var m3 = 'authorization:github:' + token;
+
   function sendAll(){
     try { window.opener && window.opener.postMessage(m1, '*'); } catch(_) {}
     try { window.opener && window.opener.postMessage(m2, '*'); } catch(_) {}
     try { window.opener && window.opener.postMessage(m3, '*'); } catch(_) {}
   }
+
+  // fire immediately & retry ~3s to avoid race with CMS boot
   sendAll();
   var n = 0, iv = setInterval(function(){ sendAll(); if(++n>=25) clearInterval(iv); }, 120);
+
+  // close popup; fallback: navigate popup itself to admin (no hash) if close blocked
   try { window.close(); } catch(_) {}
-  setTimeout(function(){ location.replace(${JSON.stringify(adminUrlFinal)}); }, 2000);
+  setTimeout(function(){ location.replace(${JSON.stringify(adminUrl)}); }, 2000);
 })();
 </script>
 </body></html>`;
